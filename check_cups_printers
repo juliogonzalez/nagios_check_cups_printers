@@ -1,0 +1,161 @@
+#!/usr/bin/env python
+# Author  : Julio Gonzalez Gil (git at juliogonzalez.es)
+# Help : http://nagios.manubulon.com/
+# Licence : GPLv3 - https://www.gnu.org/licenses/gpl-3.0.txt
+import cups
+import optparse
+import sys
+
+
+def connect_cups(hostname, port):
+    """ Connect to a CUPS server
+    Args:
+        hostname: A string with the hostname
+        port: A integer with the port
+    Returns:
+        A cups connection object
+    """
+    cups.setServer(hostname)
+    cups.setPort(port)
+    return(cups.Connection())
+
+
+def print_unknown(msg):
+    """ Print an unknown message, and exit with code 3
+    Args:
+        msg: A string with the message
+    Returns:
+        Nothing
+    """
+    print('UNKNOWN - %s' % (msg))
+    sys.exit(3)
+
+
+def print_critical(msg):
+    """ Print a critical message, and exit with code 2
+    Args:
+        msg: A string with the message
+    Returns:
+        Nothing
+    """
+    print('CRITICAL - %s' % (msg))
+    sys.exit(2)
+
+
+def print_warning(msg):
+    """ Print a warning message, and exit with code 1
+    Args:
+        msg: A string with the message
+    Returns:
+        Nothing
+    """
+    print('WARNING - %s' % (msg))
+    sys.exit(1)
+
+
+def print_ok(msg):
+    """ Print an OK message, and exit with code 0
+    Args:
+        msg: A string with the message
+    Returns:
+        Nothing
+    """
+    print('OK - %s' % (msg))
+    sys.exit(0)
+
+
+def get_printers_states(conn, printers_names=None, all_printers=False):
+    """ Get printers states
+    Args:
+        conn: A CUPS connection
+        printers_names: An array with printers names
+        all_printers: If True, check all printers, otherwise only
+                      printers at printers_names
+    Returns:
+        One array with the printers with OK state, another
+        with failed state
+    """
+    printer_status = dict()
+    printer_status['OK'] = []
+    printer_status['FAILED'] = []
+    found = False
+    printers = conn.getPrinters()
+    if all_printers:
+        printers_names = printers.keys()
+    for printer_name in printers_names:
+        for cprinter_name, cprinter_attributes in printers.items():
+            if printer_name == cprinter_name:
+                cprinter_state = cprinter_attributes['printer-state']
+                if cprinter_state == 3:
+                    printer_status['OK'].append('%s (idle)' % printer_name)
+                elif cprinter_state == 4:
+                    printer_status['OK'].append('%s (printing)' % printer_name)
+                elif cprinter_state == 5:
+                    printer_status['FAILED'].append(
+                        '%s (stopped)' % printer_name)
+                else:
+                    printer_status['FAILED'].append(
+                        '%s (error %s)' % (printer_name, cprinter_state))
+                found = True
+        if not found:
+            printer_status['FAILED'].append(printer_name + ' (not found)')
+        found = False
+    return(printer_status['OK'], printer_status['FAILED'])
+
+
+def parse_options():
+    """ Parse and validate options
+    Args:
+        None
+    Returns:
+        Two dictionaries, one with the options, one with the arguments
+    """
+    usage = "%prog <arguments>"
+    description = ('Check printers statuses on CUPS')
+    parser = optparse.OptionParser(usage=usage, description=description)
+    parser.add_option('--server', '-s', action='store', type='string',
+                      help='Server (hostname[:port])')
+    parser.add_option('--printers', '-p', action='store', type='string',
+                      help='A comma separated list of printers')
+    parser.add_option('--all-printers', '-a', action='store_true',
+                      default=False, help='Test all printers (not compatible '
+                      'with --printers)')
+    parser.add_option('--version', '-v', action='store_true', default=False,
+                      help='Show version')
+    (options, args) = parser.parse_args()
+    if options.version:
+        print("check_cups_printers version 1.0.0")
+        sys.exit(3)
+    if (options.server is None or
+        (options.printers is None and options.all_printers is False) or
+            (options.printers is not None and options.all_printers is True)):
+        print_unknown('Wrong syntax. Use -h to get help')
+    if options.printers is not None:
+        options.printers = options.printers.split(',')
+    return(options, args)
+
+
+def main():
+    options, args = parse_options()
+    hostname = options.server.split(':')[0]
+    try:
+        port = int(options.server.split(':')[1])
+    except ValueError:
+        print_unknown('Invalid port (not numeric)')
+    except IndexError:
+        port = 631
+    try:
+        conn = connect_cups(hostname, port)
+    except RuntimeError as e:
+        print_unkown(e)
+    printers_ok, printers_failed = get_printers_states(conn, options.printers,
+                                                       options.all_printers)
+    if printers_failed:
+        print_critical('%s' % (', '.join(printers_failed)))
+    if printers_ok:
+        print_ok(', '.join(printers_ok))
+    else:
+        print_unknown('No printer found')
+
+if __name__ == "__main__":
+    main()
